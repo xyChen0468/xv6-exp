@@ -1,0 +1,2 @@
+fork()
+By using a shared page table, the child could inherit the parent's page table without the need for copying. The actual memory pages would remain shared until one of the processes modifies a page.
