@@ -29,6 +29,42 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+int
+cowfault(pagetable_t pagetable, uint64 va)
+{
+  if (va >= MAXVA)
+    return -1;
+
+  pte_t* pte = walk(pagetable, va, 0);
+  
+  // ensure page is valid, address is valid and user can access
+  if(pte == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0 ||(*pte & PTE_COW)==0)
+    return -1;
+
+  uint64 pa1 = PTE2PA(*pte);
+  int refcnt = getref(pa1);
+
+  if(refcnt == 1){
+    *pte = (*pte & (~PTE_COW)) | PTE_W;
+    return 0;
+  } else if(refcnt > 1) {
+    uint64 pa2 = (uint64) kalloc();
+    if(pa2 == 0){
+      printf("cow kalloc failed.\n");
+      return -1;
+    }
+
+    memmove((void*)pa2, (void*)pa1, PGSIZE);
+    kfree((void*)pa1);
+
+    uint flags = PTE_FLAGS(*pte);
+    *pte = (PA2PTE(pa2) | flags | PTE_W) & (~PTE_COW);
+
+    return 0;
+  }
+  return -1;
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -65,6 +101,16 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(r_scause() == 0xf) {
+    uint64 va0 = r_stval();
+    // nested if fixes the testwrite test case
+    if(va0 > p->sz) {
+      setkilled(p);    
+    } else if(cowfault(p->pagetable,va0) !=0 ) {
+      setkilled(p);
+    } else if(va0 < PGSIZE) {
+      setkilled(p);
+    }
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -218,4 +264,3 @@ devintr()
     return 0;
   }
 }
-
